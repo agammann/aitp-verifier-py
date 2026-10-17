@@ -67,23 +67,49 @@ _MAX_RSA_MODULUS_BITS = 8192
 # `ring`'s and is not a substitute for this bound.
 _MAX_RSA_EXPONENT_BITS = 33
 
-__all__ = ["ALG_ED25519", "ALG_P256", "ALG_RSA", "PublicKey", "PrivateKey", "sha256"]
+__all__ = ["ALG_ED25519", "ALG_P256", "ALG_RSA", "P256_N", "PublicKey", "PrivateKey", "sha256"]
 
 
 def sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
 
-def _p256_raw_to_der(sig: bytes) -> bytes:
+# P-256 group order n (SEC 2 §2.4.2).
+P256_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+
+
+def _p256_raw_to_der(sig: bytes, *, allow_high_s: bool = False) -> bytes:
+    """Convert a raw ``R||S`` P-256 signature to DER, enforcing §5.4.7.
+
+    RFC-AITP-0001 §5.4.7 (proposal agentidentitytrustprotocol#72 Item 4):
+    verifiers MUST reject ``R`` or ``S`` equal to 0 or ``>= n``, and the
+    high-S form ``S > n/2``. ``(r, s)`` and ``(r, n - s)`` are both valid
+    ECDSA signatures, so without the last rule every P-256 signature has a
+    second, distinct wire form. pyca/cryptography (OpenSSL) accepts high-S,
+    so the check is done here, before the library is called. It applies to
+    the JWS profile too, which makes it stricter than RFC 7518.
+
+    ``allow_high_s`` is for a JOSE object defined outside AITP (an IdP's
+    OIDC ID token): §5.4.7 "Scope" says a verifier MUST NOT reject one
+    solely for high-S. ``R``/``S`` range is still enforced. This matches
+    aitp-rs, whose ``verify_raw_jose`` serves its OIDC path.
+    """
     if len(sig) != 64:
         raise ValueError(f"ES256 signature must be 64 raw bytes, got {len(sig)}")
     r = int.from_bytes(sig[:32], "big")
     s = int.from_bytes(sig[32:], "big")
+    if not (0 < r < P256_N and 0 < s < P256_N):
+        raise ValueError("P-256 signature R or S is out of range")
+    if s > P256_N // 2 and not allow_high_s:
+        raise ValueError("P-256 signature is high-S (S > n/2)")
     return encode_dss_signature(r, s)
 
 
 def _p256_der_to_raw(der: bytes) -> bytes:
+    """DER -> raw ``R||S``, normalised to low-S (§5.4.7: signers MUST)."""
     r, s = decode_dss_signature(der)
+    if s > P256_N // 2:
+        s = P256_N - s
     return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 
@@ -175,15 +201,20 @@ class PublicKey:
         except (_CryptoInvalidSignature, ValueError):
             return False
 
-    def verify_jose(self, signing_input: bytes, sig: bytes) -> bool:
-        """Verify a compact-JWS signature over the ``header.payload`` bytes."""
+    def verify_jose(self, signing_input: bytes, sig: bytes, *, idp_token: bool = False) -> bool:
+        """Verify a compact-JWS signature over the ``header.payload`` bytes.
+
+        ``idp_token=True`` for a JOSE object whose format is defined outside
+        AITP (an OIDC ID token): ES256 high-S is then accepted, per
+        RFC-AITP-0001 §5.4.7 "Scope". Every AITP-minted JWS stays strict.
+        """
         try:
             if self.alg == ALG_ED25519:
                 assert isinstance(self._key, ed25519.Ed25519PublicKey)
                 self._key.verify(sig, signing_input)
             elif self.alg == ALG_P256:
                 assert isinstance(self._key, ec.EllipticCurvePublicKey)
-                self._key.verify(_p256_raw_to_der(sig), signing_input, ec.ECDSA(_SHA256))
+                self._key.verify(_p256_raw_to_der(sig, allow_high_s=idp_token), signing_input, ec.ECDSA(_SHA256))
             elif self.alg == ALG_RSA:
                 assert isinstance(self._key, rsa.RSAPublicKey)
                 self._key.verify(sig, signing_input, padding.PKCS1v15(), _SHA256)
