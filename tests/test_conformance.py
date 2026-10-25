@@ -19,7 +19,7 @@ from aitp_verifier.harness import (
 )
 from aitp_verifier.minter import mint_input
 from aitp_verifier.timeutil import REFERENCE_CLOCK
-from run_conformance import CLAIMS, FAIL, PASS, SKIP, parse_args, run_pack
+from run_conformance import CLAIMS, FAIL, PASS, SKIP, main, parse_args, run_pack
 
 
 def test_conformance_pack_has_no_failures(spec_dir: Path) -> None:
@@ -58,6 +58,15 @@ def test_claim_choices_are_the_rfc_0001_claim_strings() -> None:
     assert list(CLAIMS) == ["AITP v0.3", "AITP v0.3 pinned-admission", "AITP v0.3 self-attestation"]
     assert parse_args(["--spec-dir", "x"]).claim == "AITP v0.3"
     assert parse_args(["--spec-dir", "x", "--claim", "AITP v0.3 self-attestation"]).claim == "AITP v0.3 self-attestation"
+
+
+def test_min_passed_floor_accepts_count_and_rejects_drop(spec_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    passed = run_pack(spec_dir / "schemas/conformance", load_kat_keys(spec_dir)).counts[PASS]
+    assert main(["--spec-dir", str(spec_dir), "--min-passed", str(passed)]) == 0
+    capsys.readouterr()
+
+    assert main(["--spec-dir", str(spec_dir), "--min-passed", str(passed + 1)]) == 1
+    assert f"passed {passed} < required {passed + 1}" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("argv", [
