@@ -45,7 +45,7 @@ from .harness import FixtureError, pop_required, run_operation, unverified_claim
 from .keys import KAT_FILES, load_kat_keys, load_packaged_kat_keys
 from .tct import presenter_from_pop
 from .timeutil import REFERENCE_CLOCK
-from .verify import OPERATIONS
+from .verify import OPERATIONS, REQUIRED_ARGUMENTS
 
 __all__ = ["Adapter", "main", "parse_request"]
 
@@ -217,6 +217,14 @@ class Adapter:
         if session_op is not None:
             code, result = session_op(params)
         elif op in OPERATIONS:
+            alternatives = REQUIRED_ARGUMENTS[op]
+            if not any(all(key in params for key in required) for required in alternatives):
+                closest = min(
+                    alternatives,
+                    key=lambda required: (sum(key not in params for key in required), -len(required)),
+                )
+                missing = next(key for key in closest if key not in params)
+                return _err(rid, "MALFORMED_REQUEST", f"{op}: missing required argument {missing!r}")
             inp = {"now": self.clock, **params}
             feature = FEATURE_GATED_OPS.get(op)
             if feature is not None:

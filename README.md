@@ -141,6 +141,11 @@ target/debug/aitp-conformance run \
     --feature aitp-self-attestation --report adapter.json
 ```
 
+When a verify request omits a required top-level argument, the adapter returns
+`MALFORMED_REQUEST` naming that argument without calling the verifier. A verifier
+exception still returns `ADAPTER_INTERNAL_ERROR`. Direct Python callers retain
+their existing missing-argument behavior.
+
 The adapter needs the spec's KAT keys (`known-answer/keypairs.json` and
 `known-answer/oidc-test-issuers.json`) to mint a fixture's placeholders. For example, it
 signs the per-issuer "not revoked" snapshots of a delegation fixture (conformance README,

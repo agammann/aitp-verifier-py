@@ -17,7 +17,7 @@ from aitp_verifier.adapter import Adapter, main, serve
 from aitp_verifier.keys import load_kat_keys
 from aitp_verifier.minter import mint_input
 from aitp_verifier.timeutil import REFERENCE_CLOCK
-from aitp_verifier.verify import OPERATIONS
+from aitp_verifier.verify import OPERATIONS, REQUIRED_ARGUMENTS
 
 
 def _run(lines: list[bytes], adapter: Adapter | None = None) -> list[dict[str, Any]]:
@@ -73,6 +73,50 @@ def test_ids_are_echoed_and_shutdown_stops_reading() -> None:
 def test_unknown_op_is_op_not_supported() -> None:
     [reply] = _run([_req("req-1", "issue_tct")])
     assert reply["ok"] is False and reply["error_code"] == "OP_NOT_SUPPORTED"
+
+
+def test_every_verify_operation_declares_required_adapter_arguments() -> None:
+    assert set(REQUIRED_ARGUMENTS) == set(OPERATIONS)
+
+
+@pytest.mark.parametrize(("op", "missing"), [
+    ("verify_envelope", "envelope"),
+    ("verify_manifest", "manifest"),
+    ("verify_tct", "tct_token"),
+    ("verify_tct_as_issuer", "tct_token"),
+    ("verify_attestation", "tct_token"),
+    ("verify_grant_voucher", "voucher_token"),
+    ("verify_delegation_token", "delegation_token"),
+    ("verify_revocation_snapshot", "snapshot"),
+    ("verify_handshake_payload", "envelope"),
+    ("verify_session_bundle", "self_aid"),
+])
+def test_missing_verify_argument_is_a_protocol_error(op: str, missing: str) -> None:
+    [reply] = _run([_req("req-1", op)])
+    assert reply == {"id": "req-1", "ok": False, "error_code": "MALFORMED_REQUEST",
+                     "message": f"{op}: missing required argument {missing!r}"}
+
+
+@pytest.mark.parametrize(("op", "params", "missing"), [
+    ("verify_envelope", {"active_tct": "token"}, "requested_capability"),
+    ("verify_handshake_payload", {"peer_a": {}}, "peer_b"),
+    ("verify_tct_as_issuer", {"tct_token": "token"}, "self_aid"),
+])
+def test_partially_supplied_verify_arguments_name_the_missing_one(
+    op: str, params: dict[str, Any], missing: str
+) -> None:
+    [reply] = _run([_req("req-1", op, **params)])
+    assert reply == {"id": "req-1", "ok": False, "error_code": "MALFORMED_REQUEST",
+                     "message": f"{op}: missing required argument {missing!r}"}
+
+
+def test_missing_verify_argument_does_not_call_verifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_call(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("malformed request reached verifier")
+
+    monkeypatch.setattr("aitp_verifier.adapter.run_operation", unexpected_call)
+    [reply] = _run([_req("req-1", "verify_tct")])
+    assert reply["error_code"] == "MALFORMED_REQUEST"
 
 
 def test_verification_success_and_failure(spec_dir: Path, keyed: Adapter) -> None:
