@@ -19,7 +19,7 @@ from aitp_verifier.harness import (
 )
 from aitp_verifier.minter import mint_input
 from aitp_verifier.timeutil import REFERENCE_CLOCK
-from run_conformance import CLAIMS, FAIL, PASS, SKIP, parse_args, run_pack
+from run_conformance import CLAIMS, FAIL, PASS, SKIP, main, parse_args, run_pack
 
 
 def test_conformance_pack_has_no_failures(spec_dir: Path) -> None:
@@ -60,6 +60,30 @@ def test_claim_choices_are_the_rfc_0001_claim_strings() -> None:
     assert parse_args(["--spec-dir", "x", "--claim", "AITP v0.3 self-attestation"]).claim == "AITP v0.3 self-attestation"
 
 
+def test_only_filters_rows_counts_and_fixtures(spec_dir: Path) -> None:
+    res = run_pack(spec_dir / "schemas/conformance", load_kat_keys(spec_dir), only="del-mh-*")
+    assert res.rows
+    ids = {fid for _, fid, _ in res.rows}
+    assert all(fid.startswith("del-mh-") for fid in ids)
+    assert set(res.fixtures) == ids
+    assert sum(res.counts.values()) == len(res.rows)
+
+
+def test_only_with_no_matches_exits_2(spec_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--spec-dir", str(spec_dir), "--only", "nope-*"]) == 2
+    captured = capsys.readouterr()
+    assert captured.err == "no fixture matches --only nope-*\n"
+    assert captured.out == ""
+
+
+def test_only_cannot_write_incomplete_report(spec_dir: Path, tmp_path: Path,
+                                             capsys: pytest.CaptureFixture[str]) -> None:
+    report = tmp_path / "partial.json"
+    assert main(["--spec-dir", str(spec_dir), "--only", "env-*", "--report", str(report)]) == 2
+    assert capsys.readouterr().err == "--report requires the full fixture pack; omit --only\n"
+    assert not report.exists()
+
+
 @pytest.mark.parametrize("argv", [
     ["--profile", "core"],
     ["--profile", "v0.1"],
@@ -87,6 +111,21 @@ def test_skip_of_a_required_fixture_fails_the_gate(meta: dict[str, Any], tmp_pat
     res = run_pack(_pack(tmp_path, **meta), load_kat_keys(spec_dir))
     assert res.rows[0][0] == SKIP
     assert res.violations and res.exit_code == 1
+
+
+def test_only_keeps_gate_for_selected_required_skip(tmp_path: Path, spec_dir: Path) -> None:
+    pack = _pack(tmp_path, status="core", required_for_core=True)
+    (tmp_path / "draft-001.json").write_text(json.dumps({
+        "id": "draft-001", "input": {"operation": "no_such_operation"},
+        "expected": {"outcome": "success"}, "status": "draft", "feature": "not-implemented",
+    }), encoding="utf-8")
+    keys = load_kat_keys(spec_dir)
+    required = run_pack(pack, keys, only="syn-*")
+    assert required.counts[SKIP] == 1
+    assert required.violations and required.exit_code == 1
+    draft = run_pack(pack, keys, only="draft-*")
+    assert draft.counts[SKIP] == 1
+    assert draft.violations == [] and draft.exit_code == 0
 
 
 def test_skip_of_a_non_required_fixture_passes_the_gate(tmp_path: Path, spec_dir: Path) -> None:
