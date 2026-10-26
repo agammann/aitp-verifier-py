@@ -84,14 +84,17 @@ opaque `extensions` slot (`fields`); RFC-AITP-0013 (TCT renewal) is not implemen
 keypairs and runs it against this implementation:
 
 ```
-python run_conformance.py --spec-dir ../agentidentitytrustprotocol [--claim "AITP v0.3"]
+python run_conformance.py --spec-dir ../agentidentitytrustprotocol [--claim "AITP v0.3"] [--only 'env-*']
 ```
 
 CI adds `--min-passed 118` so a fixture that starts being skipped cannot silently
 lower the pass count. When `SPEC_VERSION` is bumped, update the CI floor to the
 reviewed pass count for that pinned spec.
 
-The run exits nonzero on any FAIL. `--claim` names one of the RFC-AITP-0001 §10 claim
+`--only` matches fixture IDs with a glob and limits both the results and the claim gate
+to those fixtures. A pattern matching no fixtures exits 2. `--only` cannot be combined
+with `--report`, whose conformance report must cover the full fixture pack. The run exits nonzero on
+any FAIL. `--claim` names one of the RFC-AITP-0001 §10 claim
 strings, gated as the spec's
 [conformance badge rules](https://github.com/agentidentitytrustprotocol/agentidentitytrustprotocol/blob/main/docs/conformance-badge.md#claims)
 define them, and a SKIP of any fixture behind the claim fails the run too:
