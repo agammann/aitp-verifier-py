@@ -15,7 +15,7 @@ item 9; the conformance README, "Conformance runner enforcement rules"). An
 extension claim gates on every fixture carrying its ``feature``.
 
 Usage:
-    python run_conformance.py --spec-dir ../agentidentitytrustprotocol [--claim "AITP v0.3"]
+    python run_conformance.py --spec-dir ../agentidentitytrustprotocol [--claim "AITP v0.3"] [--only 'env-*']
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from importlib.metadata import PackageNotFoundError, version
 from collections import Counter
 from pathlib import Path
@@ -217,8 +218,9 @@ class PackResult:
         return 1 if self.counts[FAIL] or self.violations else 0
 
 
-def run_pack(conf_dir: Path, keys: dict[str, Any], claim: str = CORE_CLAIM) -> PackResult:
-    """Run every fixture in *conf_dir* and apply the *claim* gate."""
+def run_pack(conf_dir: Path, keys: dict[str, Any], claim: str = CORE_CLAIM,
+             only: str | None = None) -> PackResult:
+    """Run matching fixtures in *conf_dir* and apply the *claim* gate."""
     res = PackResult()
     for path in sorted(conf_dir.glob("*.json")):
         fixture = json.loads(path.read_text(encoding="utf-8"))
@@ -227,6 +229,8 @@ def run_pack(conf_dir: Path, keys: dict[str, Any], claim: str = CORE_CLAIM) -> P
         fid = fixture["id"]
         if fixture.get("status") == "reserved":
             continue  # ignored by every runner (conformance README)
+        if only is not None and not fnmatchcase(fid, only):
+            continue
         res.fixtures[fid] = fixture
         if in_scope(fixture):
             status, detail = run_fixture(fixture, keys)
@@ -346,6 +350,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--spec-dir", required=True, type=Path, help="path to the agentidentitytrustprotocol spec repo")
     ap.add_argument("--claim", choices=list(CLAIMS), default=CORE_CLAIM,
                     help=f"RFC-AITP-0001 §10 claim to gate on (default {CORE_CLAIM!r})")
+    ap.add_argument("--only", metavar="PATTERN", help="run only fixture IDs matching this glob")
     ap.add_argument("--report", type=Path, metavar="PATH",
                     help="also write the spec's conformance report (aitp-conformance-report.schema.json)")
     ap.add_argument("--spec-commit", help="report spec.commit (default: HEAD of a clean --spec-dir checkout)")
@@ -357,6 +362,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.only is not None and args.report is not None:
+        print("--report requires the full fixture pack; omit --only", file=sys.stderr)
+        return 2
 
     conf_dir = args.spec_dir / "schemas/conformance"
     if not conf_dir.is_dir():
@@ -368,7 +376,10 @@ def main(argv: list[str] | None = None) -> int:
         except ReportError as exc:
             print(f"--report: {exc}", file=sys.stderr)
             return 2
-    res = run_pack(conf_dir, load_kat_keys(args.spec_dir), args.claim)
+    res = run_pack(conf_dir, load_kat_keys(args.spec_dir), args.claim, only=args.only)
+    if args.only is not None and not res.rows:
+        print(f"no fixture matches --only {args.only}", file=sys.stderr)
+        return 2
     if args.report is not None:
         doc = build_report(res, conf_dir, spec, sorted(SUPPORTED_FEATURES), args.ci_run_url)
         args.report.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
