@@ -87,7 +87,7 @@ keypairs and runs it against this implementation:
 python run_conformance.py --spec-dir ../agentidentitytrustprotocol [--claim "AITP v0.3"] [--only 'env-*']
 ```
 
-CI adds `--min-passed 118` so a fixture that starts being skipped cannot silently
+CI adds `--min-passed 119` so a fixture that starts being skipped cannot silently
 lower the pass count. When `SPEC_VERSION` is bumped, update the CI floor to the
 reviewed pass count for that pinned spec.
 
